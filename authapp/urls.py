@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .api_views import (
+from .views import (
     ActivateAccountViewSet,
     DashboardViewSet,
     ForgotPasswordViewSet,
