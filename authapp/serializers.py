@@ -241,3 +241,15 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 class EmptySerializer(serializers.Serializer):
     pass
+
+
+class AccountSettingsSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    display_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    phone_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError('No profile changes supplied.')
+        return attrs

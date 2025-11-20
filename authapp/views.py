@@ -1,19 +1,22 @@
 from datetime import timedelta
 import random
 
-from django.contrib.auth.models import User
 from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import EmailMessage
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from django.middleware.csrf import get_token
 from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import UserProfile
 from .serializers import (
     ActivateAccountSerializer,
+    AccountSettingsSerializer,
     LoginSerializer,
     OTPVerificationSerializer,
     PasswordResetConfirmSerializer,
@@ -27,7 +30,7 @@ OTP_LENGTH = 6
 OTP_EXPIRATION_MINUTES = 15
 OTP_RESEND_WAIT_MINUTES = 5
 
-User = get_user_model()
+UserModel = get_user_model()
 
 
 def _generate_otp() -> str:
@@ -95,6 +98,7 @@ class HomeViewSet(viewsets.ViewSet):
     permission_classes = [permissions.AllowAny]
 
     def list(self, request):
+        get_token(request)
         return Response({'detail': 'Authentication service is running.'})
 
 
@@ -266,9 +270,9 @@ class LoginViewSet(viewsets.ViewSet):
 
         user_lookup = None
         if username:
-            user_lookup = User.objects.filter(username__iexact=username).first()
+            user_lookup = UserModel.objects.filter(username__iexact=username).first()
         elif email:
-            user_lookup = User.objects.filter(email__iexact=email).first()
+            user_lookup = UserModel.objects.filter(email__iexact=email).first()
 
         if user_lookup and not user_lookup.is_active:
             # Allow login flow to continue so OTP verification can complete.
@@ -331,3 +335,58 @@ class DashboardViewSet(viewsets.ViewSet):
         data['profile']['display_name'] = profile.display_name
         data['profile']['phone_number'] = profile.phone_number
         return Response(data)
+
+
+class ProfileViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request):
+        profile = _ensure_profile(request.user)
+        data = UserSerializer(request.user, context={'request': request}).data
+        data['profile']['display_name'] = profile.display_name
+        data['profile']['phone_number'] = profile.phone_number
+        return Response(data)
+
+    @action(detail=False, methods=['patch'], url_path='update')
+    def update_profile(self, request):
+        serializer = AccountSettingsSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        profile = _ensure_profile(user)
+
+        user_updates = []
+        first_name = serializer.validated_data.get('first_name')
+        last_name = serializer.validated_data.get('last_name')
+
+        if first_name is not None and first_name != user.first_name:
+            user.first_name = first_name
+            user_updates.append('first_name')
+
+        if last_name is not None and last_name != user.last_name:
+            user.last_name = last_name
+            user_updates.append('last_name')
+
+        if user_updates:
+            user.save(update_fields=user_updates)
+
+        display_name = serializer.validated_data.get('display_name')
+        phone_number = serializer.validated_data.get('phone_number')
+
+        profile_updates = []
+        if display_name is not None and display_name != profile.display_name:
+            profile.display_name = display_name or ''
+            profile_updates.append('display_name')
+
+        if phone_number is not None and phone_number != profile.phone_number:
+            profile.phone_number = phone_number or ''
+            profile_updates.append('phone_number')
+
+        if profile_updates:
+            profile.save(update_fields=profile_updates)
+
+        refreshed = UserSerializer(user, context={'request': request}).data
+        refreshed['profile']['display_name'] = profile.display_name
+        refreshed['profile']['phone_number'] = profile.phone_number
+
+        return Response({'detail': 'Profile updated successfully.', 'user': refreshed})

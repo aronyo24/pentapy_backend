@@ -12,6 +12,7 @@ from .views import (
     RegisterViewSet,
     ResendOTPViewSet,
     VerifyOTPViewSet,
+    ProfileViewSet,
 )
 
 router = DefaultRouter()
@@ -26,6 +27,7 @@ router.register('password-reset-verify', PasswordResetVerifyViewSet, basename='p
 router.register('login', LoginViewSet, basename='login')
 router.register('logout', LogoutViewSet, basename='logout')
 router.register('dashboard', DashboardViewSet, basename='dashboard')
+router.register('profile', ProfileViewSet, basename='profile')
 
 urlpatterns = router.urls
 

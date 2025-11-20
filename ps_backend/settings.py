@@ -101,6 +101,23 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
+FRONTEND_ORIGIN_RAW = os.getenv('FRONTEND_ORIGIN', 'http://localhost:8080,http://localhost:8081')
+FRONTEND_ORIGINS = [
+    origin.strip().rstrip('/')
+    for origin in FRONTEND_ORIGIN_RAW.split(',')
+    if origin.strip()
+]
+if not FRONTEND_ORIGINS:
+    FRONTEND_ORIGINS = ['http://localhost:8080']
+
+PRIMARY_FRONTEND_ORIGIN = FRONTEND_ORIGINS[0]
+
+for origin in FRONTEND_ORIGINS:
+    if origin not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(origin)
+    if origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(origin)
+
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
@@ -189,7 +206,6 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ✅ Email configuration
-# ✅ Email configuration
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND")
 EMAIL_HOST = os.getenv("EMAIL_HOST")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT"))
@@ -204,7 +220,12 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL")
 # LOGOUT_REDIRECT_URL = '/'
 # LOGIN_URL = '/login/'
 
-
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = f"{PRIMARY_FRONTEND_ORIGIN}/home"
+LOGOUT_REDIRECT_URL = f"{PRIMARY_FRONTEND_ORIGIN}/login"
+ACCOUNT_LOGOUT_REDIRECT_URL = LOGOUT_REDIRECT_URL
+SOCIALACCOUNT_LOGIN_REDIRECT_URL = LOGIN_REDIRECT_URL
+SOCIALACCOUNT_LOGIN_ON_GET = True
 
 SITE_ID = 1
 
@@ -215,6 +236,18 @@ AUTHENTICATION_BACKENDS = [
 ACCOUNT_AUTHENTICATION_METHOD = 'username_email'
 ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
+ACCOUNT_LOGIN_ATTEMPTS_LIMIT = 5
+ACCOUNT_LOGIN_ATTEMPTS_TIMEOUT = 300  # in seconds  
+
+ACCOUNT_ADAPTER = "allauth.account.adapter.DefaultAccountAdapter"
+SOCIALACCOUNT_ADAPTER = "allauth.socialaccount.adapter.DefaultSocialAccountAdapter"
+ACCOUNT_ALLOWED_REDIRECT_URLS = []
+for origin in FRONTEND_ORIGINS:
+    base = origin.rstrip('/')
+    for suffix in ('', '/', '/home', '/login'):
+        candidate = f"{base}{suffix}"
+        if candidate not in ACCOUNT_ALLOWED_REDIRECT_URLS:
+            ACCOUNT_ALLOWED_REDIRECT_URLS.append(candidate)
 ACCOUNT_LOGIN_ATTEMPTS_LIMIT = 5
 ACCOUNT_LOGIN_ATTEMPTS_TIMEOUT = 300  # in seconds  
 
