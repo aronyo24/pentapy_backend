@@ -2,29 +2,27 @@ from datetime import timedelta
 import random
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import EmailMessage
+from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from django.middleware.csrf import get_token
 from rest_framework import permissions, status, viewsets
-from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import UserProfile
 from .serializers import (
     ActivateAccountSerializer,
-    AccountSettingsSerializer,
     LoginSerializer,
     OTPVerificationSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetSerializer,
     RegisterSerializer,
     ResendOTPSerializer,
-    UserSerializer,
 )
+from userdirectory.serializers import UserSerializer
+from userdirectory.utils import ensure_profile
 
 OTP_LENGTH = 6
 OTP_EXPIRATION_MINUTES = 15
@@ -37,15 +35,10 @@ def _generate_otp() -> str:
     return f"{random.randint(0, 10 ** OTP_LENGTH - 1):0{OTP_LENGTH}d}"
 
 
-def _ensure_profile(user: User) -> UserProfile:
-    profile, _ = UserProfile.objects.get_or_create(user=user)
-    return profile
-
-
-def _issue_registration_otp(request, user: User) -> dict:
+def _issue_registration_otp(request, user) -> dict:
     otp_code = _generate_otp()
     expires_at = timezone.now() + timedelta(minutes=OTP_EXPIRATION_MINUTES)
-    profile = _ensure_profile(user)
+    profile = ensure_profile(user)
     profile.issue_otp(otp_code, UserProfile.REGISTRATION, expires_at)
 
     uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
@@ -69,10 +62,10 @@ def _issue_registration_otp(request, user: User) -> dict:
     }
 
 
-def _issue_password_reset_otp(request, user: User) -> dict:
+def _issue_password_reset_otp(request, user) -> dict:
     otp_code = _generate_otp()
     expires_at = timezone.now() + timedelta(minutes=OTP_EXPIRATION_MINUTES)
-    profile = _ensure_profile(user)
+    profile = ensure_profile(user)
     profile.issue_otp(
         otp_code,
         UserProfile.RESET_PASSWORD,
@@ -108,68 +101,21 @@ class RegisterViewSet(viewsets.ViewSet):
     def create(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         user = serializer.save()
+        ensure_profile(user)
 
         request.session['pending_user_id'] = user.pk
         otp_payload = _issue_registration_otp(request, user)
 
         return Response(
             {
-                'detail': 'Registration successful. Verification code sent to your email.',
+                'detail': 'Registration successful. Check your email for the verification code.',
                 'uidb64': otp_payload['uidb64'],
                 'token': otp_payload['token'],
             },
             status=status.HTTP_201_CREATED,
         )
-
-
-class ActivateAccountViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.AllowAny]
-
-    def create(self, request):
-        serializer = ActivateAccountSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data['user']
-
-        user.is_active = True
-        user.save(update_fields=['is_active'])
-
-        profile = _ensure_profile(user)
-        profile.mark_email_verified()
-
-        return Response({'detail': 'Account activated successfully.'})
-
-
-class VerifyOTPViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.AllowAny]
-
-    def create(self, request):
-        serializer = OTPVerificationSerializer(data=request.data, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-
-        user = serializer.validated_data['user']
-        otp_code = serializer.validated_data['otp_code']
-        profile = _ensure_profile(user)
-
-        if profile.otp_purpose != UserProfile.REGISTRATION:
-            return Response({'detail': 'No registration OTP pending.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if profile.otp_is_expired():
-            return Response({'detail': 'OTP expired. Request a new code.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not profile.otp_matches(otp_code):
-            return Response({'detail': 'Invalid OTP provided.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        profile.mark_otp_used()
-        profile.mark_email_verified()
-        user.is_active = True
-        user.save(update_fields=['is_active'])
-
-        pending_user_id = request.session.get('pending_user_id')
-        if pending_user_id and pending_user_id == user.pk:
-            request.session.pop('pending_user_id', None)
-
-        return Response({'detail': 'Email verified successfully.'})
 
 
 class ResendOTPViewSet(viewsets.ViewSet):
@@ -179,7 +125,7 @@ class ResendOTPViewSet(viewsets.ViewSet):
         serializer = ResendOTPSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
-        profile = _ensure_profile(user)
+        profile = ensure_profile(user)
 
         now = timezone.now()
         if profile.last_otp_sent_at and (now - profile.last_otp_sent_at) < timedelta(minutes=OTP_RESEND_WAIT_MINUTES):
@@ -202,6 +148,55 @@ class ResendOTPViewSet(viewsets.ViewSet):
         )
 
 
+class VerifyOTPViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.AllowAny]
+
+    def create(self, request):
+        serializer = OTPVerificationSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.validated_data['user']
+        otp_code = serializer.validated_data['otp_code']
+        profile = ensure_profile(user)
+
+        if profile.otp_purpose != UserProfile.REGISTRATION:
+            return Response({'detail': 'No verification in progress for this account.'}, status=status.HTTP_400_BAD_REQUEST)
+        if profile.otp_is_expired():
+            return Response({'detail': 'OTP expired. Request a new code.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not profile.otp_matches(otp_code):
+            return Response({'detail': 'Invalid OTP provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.is_active = True
+        user.save(update_fields=['is_active'])
+        profile.mark_email_verified()
+        profile.mark_otp_used()
+        request.session.pop('pending_user_id', None)
+
+        login(request, user)
+        data = UserSerializer(user, context={'request': request}).data
+        return Response({'detail': 'Email verified successfully.', 'user': data})
+
+
+class ActivateAccountViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.AllowAny]
+
+    def create(self, request):
+        serializer = ActivateAccountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.validated_data['user']
+        profile = ensure_profile(user)
+
+        user.is_active = True
+        user.save(update_fields=['is_active'])
+        profile.mark_email_verified()
+        profile.clear_otp()
+
+        login(request, user)
+        data = UserSerializer(user, context={'request': request}).data
+        return Response({'detail': 'Account activated successfully.', 'user': data})
+
+
 class ForgotPasswordViewSet(viewsets.ViewSet):
     permission_classes = [permissions.AllowAny]
 
@@ -209,7 +204,7 @@ class ForgotPasswordViewSet(viewsets.ViewSet):
         serializer = PasswordResetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
-        profile = _ensure_profile(user)
+        profile = ensure_profile(user)
 
         now = timezone.now()
         if (
@@ -240,7 +235,7 @@ class PasswordResetVerifyViewSet(viewsets.ViewSet):
         user = serializer.validated_data['user']
         otp_code = serializer.validated_data['otp_code']
         new_password = serializer.validated_data['new_password']
-        profile = _ensure_profile(user)
+        profile = ensure_profile(user)
 
         if profile.otp_purpose != UserProfile.RESET_PASSWORD:
             return Response({'detail': 'No password reset in progress.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -264,58 +259,38 @@ class LoginViewSet(viewsets.ViewSet):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        username = serializer.validated_data.get('username')
-        email = serializer.validated_data.get('email')
+        identifier = serializer.validated_data['identifier']
         password = serializer.validated_data['password']
 
-        user_lookup = None
-        if username:
-            user_lookup = UserModel.objects.filter(username__iexact=username).first()
-        elif email:
-            user_lookup = UserModel.objects.filter(email__iexact=email).first()
+        raw_email = serializer.validated_data.get('email')
+        raw_username = serializer.validated_data.get('username')
 
-        if user_lookup and not user_lookup.is_active:
-            # Allow login flow to continue so OTP verification can complete.
-            user_lookup.is_active = True
-            user_lookup.save(update_fields=['is_active'])
-
-        login_username = username or (user_lookup.username if user_lookup else None)
-        user = authenticate(request, username=login_username, password=password) if login_username else None
+        if raw_email:
+            user = UserModel.objects.filter(email__iexact=raw_email).first()
+        else:
+            user = UserModel.objects.filter(username__iexact=raw_username or identifier).first()
 
         if not user:
-            return Response({'detail': 'Invalid credentials.'}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({'detail': 'Invalid credentials.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        profile = _ensure_profile(user)
-        login(request, user)
+        authenticated_user = authenticate(request, username=user.username, password=password)
+        if not authenticated_user:
+            return Response({'detail': 'Invalid credentials.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not profile.email_verified:
-            request.session['pending_user_id'] = user.pk
-            now = timezone.now()
-            needs_new_code = (
-                profile.otp_purpose != UserProfile.REGISTRATION
-                or not profile.last_otp_sent_at
-                or (now - profile.last_otp_sent_at) >= timedelta(minutes=OTP_RESEND_WAIT_MINUTES)
-            )
-
-            if needs_new_code:
-                _issue_registration_otp(request, user)
-                message = 'Email verification required. A fresh OTP has been sent to your inbox.'
-            else:
-                message = 'Email verification required. Use the OTP already sent to your inbox.'
-
+        profile = ensure_profile(authenticated_user)
+        if not authenticated_user.is_active or not profile.email_verified:
+            request.session['pending_user_id'] = authenticated_user.pk
+            _issue_registration_otp(request, authenticated_user)
             return Response(
                 {
-                    'detail': message,
+                    'detail': 'Please verify your email to continue. A new code has been sent.',
                     'requires_verification': True,
                 }
             )
 
-        return Response(
-            {
-                'detail': 'Login successful.',
-                'user': UserSerializer(user, context={'request': request}).data,
-            }
-        )
+        login(request, authenticated_user)
+        data = UserSerializer(authenticated_user, context={'request': request}).data
+        return Response({'detail': 'Login successful.', 'user': data})
 
 
 class LogoutViewSet(viewsets.ViewSet):
@@ -324,69 +299,3 @@ class LogoutViewSet(viewsets.ViewSet):
     def create(self, request):
         logout(request)
         return Response({'detail': 'Logged out successfully.'})
-
-
-class DashboardViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def list(self, request):
-        profile = _ensure_profile(request.user)
-        data = UserSerializer(request.user, context={'request': request}).data
-        data['profile']['display_name'] = profile.display_name
-        data['profile']['phone_number'] = profile.phone_number
-        return Response(data)
-
-
-class ProfileViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def list(self, request):
-        profile = _ensure_profile(request.user)
-        data = UserSerializer(request.user, context={'request': request}).data
-        data['profile']['display_name'] = profile.display_name
-        data['profile']['phone_number'] = profile.phone_number
-        return Response(data)
-
-    @action(detail=False, methods=['patch'], url_path='update')
-    def update_profile(self, request):
-        serializer = AccountSettingsSerializer(data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-
-        user = request.user
-        profile = _ensure_profile(user)
-
-        user_updates = []
-        first_name = serializer.validated_data.get('first_name')
-        last_name = serializer.validated_data.get('last_name')
-
-        if first_name is not None and first_name != user.first_name:
-            user.first_name = first_name
-            user_updates.append('first_name')
-
-        if last_name is not None and last_name != user.last_name:
-            user.last_name = last_name
-            user_updates.append('last_name')
-
-        if user_updates:
-            user.save(update_fields=user_updates)
-
-        display_name = serializer.validated_data.get('display_name')
-        phone_number = serializer.validated_data.get('phone_number')
-
-        profile_updates = []
-        if display_name is not None and display_name != profile.display_name:
-            profile.display_name = display_name or ''
-            profile_updates.append('display_name')
-
-        if phone_number is not None and phone_number != profile.phone_number:
-            profile.phone_number = phone_number or ''
-            profile_updates.append('phone_number')
-
-        if profile_updates:
-            profile.save(update_fields=profile_updates)
-
-        refreshed = UserSerializer(user, context={'request': request}).data
-        refreshed['profile']['display_name'] = profile.display_name
-        refreshed['profile']['phone_number'] = profile.phone_number
-
-        return Response({'detail': 'Profile updated successfully.', 'user': refreshed})

@@ -3,7 +3,6 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     ActivateAccountViewSet,
-    DashboardViewSet,
     ForgotPasswordViewSet,
     HomeViewSet,
     LoginViewSet,
@@ -12,7 +11,6 @@ from .views import (
     RegisterViewSet,
     ResendOTPViewSet,
     VerifyOTPViewSet,
-    ProfileViewSet,
 )
 
 router = DefaultRouter()
@@ -26,8 +24,5 @@ router.register('forgot-password', ForgotPasswordViewSet, basename='forgot_passw
 router.register('password-reset-verify', PasswordResetVerifyViewSet, basename='password_reset_verify')
 router.register('login', LoginViewSet, basename='login')
 router.register('logout', LogoutViewSet, basename='logout')
-router.register('dashboard', DashboardViewSet, basename='dashboard')
-router.register('profile', ProfileViewSet, basename='profile')
-
 urlpatterns = router.urls
 

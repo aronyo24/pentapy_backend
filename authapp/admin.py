@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import UserProfile
+from .models import Follow, UserProfile
 
 
 @admin.register(UserProfile)
@@ -23,3 +23,10 @@ class UserProfileAdmin(admin.ModelAdmin):
         'created_at',
         'updated_at',
     )
+
+
+@admin.register(Follow)
+class FollowAdmin(admin.ModelAdmin):
+    list_display = ('follower', 'following', 'created_at')
+    search_fields = ('follower__username', 'following__username')
+    list_filter = ('created_at',)

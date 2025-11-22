@@ -10,50 +10,6 @@ from .models import UserProfile
 User = get_user_model()
 
 
-class UserProfileSerializer(serializers.ModelSerializer):
-    avatar = serializers.ImageField(read_only=True)
-
-    class Meta:
-        model = UserProfile
-        fields = (
-            'display_name',
-            'phone_number',
-            'avatar',
-            'email_verified',
-            'last_otp_sent_at',
-            'otp_used',
-        )
-        read_only_fields = (
-            'avatar',
-            'email_verified',
-            'last_otp_sent_at',
-            'otp_used',
-        )
-
-
-class UserSerializer(serializers.ModelSerializer):
-    profile = UserProfileSerializer(read_only=True)
-
-    class Meta:
-        model = User
-        fields = (
-            'id',
-            'username',
-            'email',
-            'first_name',
-            'last_name',
-            'profile',
-        )
-        read_only_fields = (
-            'id',
-            'username',
-            'email',
-            'first_name',
-            'last_name',
-            'profile',
-        )
-
-
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True, min_length=8)
@@ -228,28 +184,3 @@ class ActivateAccountSerializer(serializers.Serializer):
         return attrs
 
 
-class UpdateProfileSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = UserProfile
-        fields = ('display_name', 'phone_number', 'avatar')
-
-
-class ChangePasswordSerializer(serializers.Serializer):
-    old_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(write_only=True)
-
-
-class EmptySerializer(serializers.Serializer):
-    pass
-
-
-class AccountSettingsSerializer(serializers.Serializer):
-    first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
-    last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
-    display_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
-    phone_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
-
-    def validate(self, attrs):
-        if not attrs:
-            raise serializers.ValidationError('No profile changes supplied.')
-        return attrs

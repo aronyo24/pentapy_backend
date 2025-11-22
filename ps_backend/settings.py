@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'authapp.apps.AuthappConfig',
     'api',
+    'userdirectory',
 
     'rest_framework',
     'corsheaders',

@@ -1,4 +1,4 @@
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -13,7 +13,7 @@ class UserProfile(models.Model):
         (RESET_PASSWORD, 'Password Reset'),
     ]
 
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
     display_name = models.CharField(max_length=150, blank=True)
     phone_number = models.CharField(max_length=32, blank=True)
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
@@ -95,3 +95,29 @@ class UserProfile(models.Model):
                 'updated_at',
             ]
         )
+
+
+class Follow(models.Model):
+    follower = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='following_relations',
+    )
+    following = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='follower_relations',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=('follower', 'following'), name='authapp_unique_follow'),
+        ]
+        indexes = [
+            models.Index(fields=('follower', 'following')),
+            models.Index(fields=('following', 'follower')),
+        ]
+
+    def __str__(self):
+        return f"{self.follower.username} -> {self.following.username}"
