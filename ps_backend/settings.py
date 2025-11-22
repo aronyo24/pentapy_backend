@@ -44,9 +44,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'authapp.apps.AuthappConfig',
     'api',
     'userdirectory',
+    'chatapp',
 
     'rest_framework',
     'corsheaders',
@@ -68,18 +70,20 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-     'authapp.middleware.EmailVerificationRequiredMiddleware',
-
-      # Required by django-allauth (must be after AuthenticationMiddleware)
+    'authapp.middleware.EmailVerificationRequiredMiddleware',
+    # Required by django-allauth (must be after AuthenticationMiddleware)
     'allauth.account.middleware.AccountMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
-
 ]
 
 REST_FRAMEWORK = {
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
-    ]
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+    ),
 }
 
 CORS_ALLOWED_ORIGINS = [
@@ -149,6 +153,13 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'ps_backend.wsgi.application'
+ASGI_APPLICATION = 'ps_backend.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 
 # Database
