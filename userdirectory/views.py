@@ -6,7 +6,13 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from authapp.models import Follow
-from userdirectory.serializers import AccountSettingsSerializer, PublicUserSerializer, UserSerializer
+from userdirectory.models import Notification
+from userdirectory.serializers import (
+    AccountSettingsSerializer,
+    NotificationSerializer,
+    PublicUserSerializer,
+    UserSerializer,
+)
 from userdirectory.utils import ensure_profile
 
 UserModel = get_user_model()
@@ -170,7 +176,13 @@ class UserDirectoryViewSet(viewsets.ReadOnlyModelViewSet):
         if target.pk == request.user.pk:
             return Response({'detail': 'You cannot follow yourself.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        Follow.objects.get_or_create(follower=request.user, following=target)
+        follow_relation, created = Follow.objects.get_or_create(follower=request.user, following=target)
+        if created:
+            Notification.objects.create(
+                recipient=target,
+                actor=request.user,
+                notification_type=Notification.FOLLOW,
+            )
         refreshed = self.get_queryset().filter(pk=target.pk).first()
         serializer = self.get_serializer(refreshed)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -185,3 +197,34 @@ class UserDirectoryViewSet(viewsets.ReadOnlyModelViewSet):
         refreshed = self.get_queryset().filter(pk=target.pk).first()
         serializer = self.get_serializer(refreshed)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = NotificationSerializer
+
+    def get_queryset(self):
+        base_qs = Notification.objects.filter(recipient=self.request.user)
+        return base_qs.select_related('actor__profile').order_by('-created_at')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['following_ids'] = set(
+            Follow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
+        )
+        return context
+
+    @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        if not notification.is_read:
+            notification.is_read = True
+            notification.save(update_fields=['is_read'])
+        serializer = self.get_serializer(notification)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def mark_all_read(self, request):
+        queryset = self.get_queryset().filter(is_read=False)
+        updated = queryset.update(is_read=True)
+        return Response({'detail': f'{updated} notification(s) marked as read.'})

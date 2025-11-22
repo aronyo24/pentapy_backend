@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from rest_framework import serializers
 
-from authapp.models import UserProfile
+from authapp.models import Follow, UserProfile
+from userdirectory.models import Notification
 
 User = get_user_model()
 
@@ -131,3 +133,77 @@ class PublicUserSerializer(serializers.ModelSerializer):
         if profile and getattr(profile, 'display_name', None):
             return profile.display_name
         return ''
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    actor = serializers.SerializerMethodField()
+    message = serializers.SerializerMethodField()
+    can_follow_back = serializers.SerializerMethodField()
+    follow_back_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = (
+            'id',
+            'notification_type',
+            'message',
+            'created_at',
+            'is_read',
+            'actor',
+            'can_follow_back',
+            'follow_back_url',
+        )
+        read_only_fields = fields
+
+    def _resolve_avatar(self, actor):
+        profile = getattr(actor, 'profile', None)
+        if not profile or not getattr(profile, 'avatar', None):
+            return None
+
+        request = self.context.get('request')
+        avatar_url = profile.avatar.url
+        if request:
+            avatar_url = request.build_absolute_uri(avatar_url)
+        return avatar_url
+
+    def get_actor(self, obj):
+        profile = getattr(obj.actor, 'profile', None)
+        display_name = ''
+        if profile and getattr(profile, 'display_name', None):
+            display_name = profile.display_name
+
+        return {
+            'id': obj.actor.id,
+            'username': obj.actor.username,
+            'full_name': obj.actor.get_full_name() or obj.actor.username,
+            'display_name': display_name,
+            'avatar': self._resolve_avatar(obj.actor),
+        }
+
+    def get_message(self, obj):
+        if obj.notification_type == Notification.FOLLOW:
+            return 'started following you'
+        payload = obj.payload or {}
+        return payload.get('message', '')
+
+    def get_can_follow_back(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+
+        if obj.actor_id == request.user.id:
+            return False
+
+        following_ids = self.context.get('following_ids')
+        if following_ids is None:
+            following_ids = set(
+                Follow.objects.filter(follower=request.user).values_list('following_id', flat=True)
+            )
+            self.context['following_ids'] = following_ids
+
+        return obj.actor_id not in following_ids
+
+    def get_follow_back_url(self, obj):
+        if obj.notification_type != Notification.FOLLOW:
+            return None
+        return reverse('users-follow', kwargs={'username': obj.actor.username})
